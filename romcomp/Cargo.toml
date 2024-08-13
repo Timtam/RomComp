@@ -1,0 +1,14 @@
+[package]
+name = "romcomp"
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+
+[dependencies]
+bitflags = "2.6.0"
+clap = { version = "4.5.15", features = ["derive"] }
+walkdir = "2.5.0"
