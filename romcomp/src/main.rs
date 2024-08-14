@@ -1,7 +1,9 @@
+mod convert;
 mod rom_format;
 mod search;
 
 use clap::{Parser, ValueEnum};
+use convert::Converter;
 use rom_format::RomFormat;
 use search::guess_file;
 use std::{
@@ -77,18 +79,31 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    let converter = Converter::new();
+
     if cli.location.is_dir() {
         for entry in WalkDir::new(cli.location)
             .into_iter()
             .filter_map(|e| e.ok())
         {
-            if entry.file_type().is_file()
-                && guess_file(&entry.path().to_path_buf())
-                    .map(|f| f.contains(fmt))
-                    .unwrap_or(false)
-            {}
+            if entry.file_type().is_file() {
+                let guess = guess_file(&entry.path().to_path_buf());
+                if guess.is_some_and(|f| f.contains(fmt)) {
+                    converter.convert(
+                        &entry.path().to_path_buf(),
+                        (guess.unwrap() & RomFormat::FILE_FORMATS) | fmt,
+                    );
+                }
+            }
         }
+    } else {
+        converter.convert(
+            &cli.location,
+            (guess_file(&cli.location).unwrap() & RomFormat::FILE_FORMATS) | fmt,
+        );
     }
+
+    converter.finish();
 
     ExitCode::from(0)
 }

@@ -25,12 +25,12 @@ pub fn guess_file(path: &PathBuf) -> Option<RomFormat> {
                             ))
                             .is_file()
                     {
-                        Some(RomFormat::PSX | RomFormat::PS2)
+                        Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::BIN)
                     } else {
                         None
                     }
                 }
-                "iso" => Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::PSP),
+                "iso" => Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::PSP | RomFormat::ISO),
                 _ => None,
             }
         } else {
