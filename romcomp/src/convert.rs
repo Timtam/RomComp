@@ -28,6 +28,7 @@ pub struct Converter {
     input_file_size: Arc<AtomicUsize>,
     output_file_size: Arc<AtomicUsize>,
     verbose: bool,
+    remove_after_compression: bool,
 }
 
 impl Converter {
@@ -40,11 +41,17 @@ impl Converter {
             input_file_size: Arc::new(AtomicUsize::new(0)),
             output_file_size: Arc::new(AtomicUsize::new(0)),
             verbose: false,
+            remove_after_compression: false,
         }
     }
 
     pub fn verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
+        self
+    }
+
+    pub fn remove_after_compression(mut self, remove: bool) -> Self {
+        self.remove_after_compression = remove;
         self
     }
 
@@ -71,7 +78,7 @@ impl Converter {
         let os = self.output_file_size.load(Ordering::Relaxed);
 
         println!(
-            "Conversion finished:
+            "Compression finished:
             \tProcessed files: {}, Skipped files: {}, Total: {}
             \tInput file size: {}, Output file size: {}
             \tSaved {} ({:.2}%)",
@@ -106,83 +113,100 @@ impl Converter {
         let is_ptr = Arc::clone(&self.input_file_size);
         let os_ptr = Arc::clone(&self.output_file_size);
         let p = file.clone();
+        let rem = self.remove_after_compression;
+        let verbose = self.verbose;
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
 
         if self.verbose {
-            println!("Beginning conversion of {}...", file.display());
+            println!("Beginning compression of {}...", file.display());
         }
 
         std::thread::spawn(move || {
-            let prepare_files = |p: &PathBuf, f: RomFormat| -> Vec<(PathBuf, FileSource)> {
-                if f.contains(RomFormat::BIN) {
-                    if p.parent()
-                        .unwrap()
-                        .join(format!(
-                            "{}.{}",
-                            p.file_stem().unwrap().to_str().unwrap(),
-                            "cue.txt"
-                        ))
-                        .is_file()
-                    {
-                        let _ = copy(
-                            p.parent().unwrap().join(format!(
+            let prepare_files =
+                |p: &PathBuf, f: RomFormat, verbose: bool| -> Vec<(PathBuf, FileSource)> {
+                    if f.contains(RomFormat::BIN) {
+                        if p.parent()
+                            .unwrap()
+                            .join(format!(
                                 "{}.{}",
                                 p.file_stem().unwrap().to_str().unwrap(),
                                 "cue.txt"
-                            )),
-                            p.parent().unwrap().join(format!(
-                                "{}.{}",
-                                p.file_stem().unwrap().to_str().unwrap(),
-                                "cue"
-                            )),
-                        );
-                        vec![
-                            (p.clone(), FileSource::Input),
-                            (
+                            ))
+                            .is_file()
+                        {
+                            if verbose {
+                                println!("Copy cue.txt to cue file temporarily");
+                            }
+                            let _ = copy(
                                 p.parent().unwrap().join(format!(
                                     "{}.{}",
                                     p.file_stem().unwrap().to_str().unwrap(),
                                     "cue.txt"
                                 )),
-                                FileSource::Input,
-                            ),
-                            (
                                 p.parent().unwrap().join(format!(
                                     "{}.{}",
                                     p.file_stem().unwrap().to_str().unwrap(),
                                     "cue"
                                 )),
-                                FileSource::Temporary,
-                            ),
-                        ]
+                            );
+                            vec![
+                                (p.clone(), FileSource::Input),
+                                (
+                                    p.parent().unwrap().join(format!(
+                                        "{}.{}",
+                                        p.file_stem().unwrap().to_str().unwrap(),
+                                        "cue.txt"
+                                    )),
+                                    FileSource::Input,
+                                ),
+                                (
+                                    p.parent().unwrap().join(format!(
+                                        "{}.{}",
+                                        p.file_stem().unwrap().to_str().unwrap(),
+                                        "cue"
+                                    )),
+                                    FileSource::Temporary,
+                                ),
+                            ]
+                        } else {
+                            vec![
+                                (p.clone(), FileSource::Input),
+                                (
+                                    p.parent().unwrap().join(format!(
+                                        "{}.{}",
+                                        p.file_stem().unwrap().to_str().unwrap(),
+                                        "cue"
+                                    )),
+                                    FileSource::Input,
+                                ),
+                            ]
+                        }
                     } else {
-                        vec![
-                            (p.clone(), FileSource::Input),
-                            (
-                                p.parent().unwrap().join(format!(
-                                    "{}.{}",
-                                    p.file_stem().unwrap().to_str().unwrap(),
-                                    "cue"
-                                )),
-                                FileSource::Input,
-                            ),
-                        ]
+                        vec![(p.clone(), FileSource::Input)]
                     }
-                } else {
-                    vec![(p.clone(), FileSource::Input)]
-                }
-            };
+                };
 
-            let cleanup = |f: Vec<(PathBuf, FileSource)>| {
-                for (file, source) in f.into_iter() {
-                    if source == FileSource::Temporary {
-                        let _ = remove_file(file);
+            let cleanup =
+                |f: Vec<(PathBuf, FileSource)>, remove_after_compression: bool, verbose: bool| {
+                    for (file, source) in f.into_iter() {
+                        if source == FileSource::Temporary {
+                            if verbose {
+                                println!("Deleting temporary file {}", file.display());
+                            }
+
+                            let _ = remove_file(file);
+                        } else if source == FileSource::Input && remove_after_compression {
+                            if verbose {
+                                println!("Deleting input file {}", file.display());
+                            }
+
+                            let _ = remove_file(file);
+                        }
                     }
-                }
-            };
+                };
 
-            let files = prepare_files(&p, format);
+            let files = prepare_files(&p, format, verbose);
 
             is_ptr.fetch_add(
                 p.size_on_disk().unwrap().try_into().unwrap(),
@@ -212,7 +236,9 @@ impl Converter {
                     .status();
             }
 
-            cleanup(files);
+            cleanup(files, rem, verbose);
+
+            println!("Finished compression of {}", out_file.display());
 
             os_ptr.fetch_add(
                 out_file.size_on_disk().unwrap().try_into().unwrap(),

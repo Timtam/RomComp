@@ -38,6 +38,11 @@ struct Cli {
 
     #[arg(short, long, action, default_value_t = num_cpus::get())]
     threads: usize,
+
+    /// delete input files after compression
+
+    #[arg(short = 'R', long = "remove", action)]
+    remove_after_compression: bool,
 }
 
 #[derive(ValueEnum, Clone, Eq, PartialEq, Debug)]
@@ -89,7 +94,9 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let converter = Converter::new(cli.threads).verbose(cli.verbose);
+    let converter = Converter::new(cli.threads)
+        .verbose(cli.verbose)
+        .remove_after_compression(cli.remove_after_compression);
 
     println!(
         "Start ROM compression with {} simultaneous processes",
