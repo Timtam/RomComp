@@ -21,22 +21,31 @@ enum FileSource {
 }
 
 pub struct Converter {
+    available_threads: usize,
     thread_count: Arc<AtomicUsize>,
     skipped_files: Arc<AtomicUsize>,
     processed_files: Arc<AtomicUsize>,
     input_file_size: Arc<AtomicUsize>,
     output_file_size: Arc<AtomicUsize>,
+    verbose: bool,
 }
 
 impl Converter {
-    pub fn new() -> Self {
+    pub fn new(threads: usize) -> Self {
         Self {
+            available_threads: threads,
             thread_count: Arc::new(AtomicUsize::new(0)),
             skipped_files: Arc::new(AtomicUsize::new(0)),
             processed_files: Arc::new(AtomicUsize::new(0)),
             input_file_size: Arc::new(AtomicUsize::new(0)),
             output_file_size: Arc::new(AtomicUsize::new(0)),
+            verbose: false,
         }
+    }
+
+    pub fn verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 
     pub fn get_output_file_name(file: &PathBuf, format: RomFormat) -> Option<PathBuf> {
@@ -82,10 +91,13 @@ impl Converter {
             .unwrap_or(false)
         {
             self.skipped_files.fetch_add(1, Ordering::Relaxed);
+            if self.verbose {
+                println!("Skipping {}: Target file already exists", file.display());
+            }
             return;
         }
 
-        while self.thread_count.load(Ordering::Relaxed) >= num_cpus::get() {
+        while self.thread_count.load(Ordering::Relaxed) >= self.available_threads {
             std::thread::sleep(Duration::from_millis(50));
         }
 
@@ -96,6 +108,10 @@ impl Converter {
         let p = file.clone();
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
+
+        if self.verbose {
+            println!("Beginning conversion of {}...", file.display());
+        }
 
         std::thread::spawn(move || {
             let prepare_files = |p: &PathBuf, f: RomFormat| -> Vec<(PathBuf, FileSource)> {

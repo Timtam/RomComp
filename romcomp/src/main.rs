@@ -31,7 +31,13 @@ struct Cli {
     /// enable additional debug messages
 
     #[arg(short, long, action)]
-    debug: bool,
+    verbose: bool,
+
+    /// how many conversions should be running in parallel?
+    /// default is the amount of available CPU cores
+
+    #[arg(short, long, action, default_value_t = num_cpus::get())]
+    threads: usize,
 }
 
 #[derive(ValueEnum, Clone, Eq, PartialEq, Debug)]
@@ -83,7 +89,12 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let converter = Converter::new();
+    let converter = Converter::new(cli.threads).verbose(cli.verbose);
+
+    println!(
+        "Start ROM compression with {} simultaneous processes",
+        cli.threads
+    );
 
     if cli.location.is_dir() {
         for entry in WalkDir::new(cli.location)
