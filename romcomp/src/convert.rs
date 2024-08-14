@@ -1,4 +1,6 @@
 use crate::rom_format::RomFormat;
+use filesize::PathExt;
+use humansize::{format_size, DECIMAL};
 use std::{
     fs::{copy, remove_file},
     path::PathBuf,
@@ -20,12 +22,20 @@ enum FileSource {
 
 pub struct Converter {
     thread_count: Arc<AtomicUsize>,
+    skipped_files: Arc<AtomicUsize>,
+    processed_files: Arc<AtomicUsize>,
+    input_file_size: Arc<AtomicUsize>,
+    output_file_size: Arc<AtomicUsize>,
 }
 
 impl Converter {
     pub fn new() -> Self {
         Self {
             thread_count: Arc::new(AtomicUsize::new(0)),
+            skipped_files: Arc::new(AtomicUsize::new(0)),
+            processed_files: Arc::new(AtomicUsize::new(0)),
+            input_file_size: Arc::new(AtomicUsize::new(0)),
+            output_file_size: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -45,10 +55,33 @@ impl Converter {
         while self.thread_count.load(Ordering::Relaxed) > 0 {
             std::thread::sleep(Duration::from_millis(50));
         }
+
+        let processed = self.processed_files.load(Ordering::Relaxed);
+        let skipped = self.skipped_files.load(Ordering::Relaxed);
+        let is = self.input_file_size.load(Ordering::Relaxed);
+        let os = self.output_file_size.load(Ordering::Relaxed);
+
+        println!(
+            "Conversion finished:
+            \tProcessed files: {}, Skipped files: {}, Total: {}
+            \tInput file size: {}, Output file size: {}
+            \tSaved {} ({:.2}%)",
+            processed,
+            skipped,
+            processed + skipped,
+            &format_size(is, DECIMAL),
+            &format_size(os, DECIMAL),
+            &format_size(is - os, DECIMAL),
+            100f64 - (os as f64 * 100f64 / is as f64)
+        );
     }
 
     pub fn convert(&self, file: &PathBuf, format: RomFormat) {
-        if Converter::get_output_file_name(file, format).map(|f| f.is_file()).unwrap_or(false) {
+        if Converter::get_output_file_name(file, format)
+            .map(|f| f.is_file())
+            .unwrap_or(false)
+        {
+            self.skipped_files.fetch_add(1, Ordering::Relaxed);
             return;
         }
 
@@ -56,7 +89,10 @@ impl Converter {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        let ptr = Arc::clone(&self.thread_count);
+        let t_ptr = Arc::clone(&self.thread_count);
+        let p_ptr = Arc::clone(&self.processed_files);
+        let is_ptr = Arc::clone(&self.input_file_size);
+        let os_ptr = Arc::clone(&self.output_file_size);
         let p = file.clone();
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
@@ -132,6 +168,11 @@ impl Converter {
 
             let files = prepare_files(&p, format);
 
+            is_ptr.fetch_add(
+                p.size_on_disk().unwrap().try_into().unwrap(),
+                Ordering::Relaxed,
+            );
+
             let in_file = if format.contains(RomFormat::BIN) {
                 p.parent().unwrap().join(format!(
                     "{}.{}",
@@ -157,7 +198,12 @@ impl Converter {
 
             cleanup(files);
 
-            ptr.fetch_sub(1, Ordering::Relaxed);
+            os_ptr.fetch_add(
+                out_file.size_on_disk().unwrap().try_into().unwrap(),
+                Ordering::Relaxed,
+            );
+            p_ptr.fetch_add(1, Ordering::Relaxed);
+            t_ptr.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }
