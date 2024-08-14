@@ -7,6 +7,7 @@ use convert::Converter;
 use rom_format::RomFormat;
 use search::guess_file;
 use std::{
+    fs::canonicalize,
     io::ErrorKind,
     path::PathBuf,
     process::{Command, ExitCode, Stdio},
@@ -43,6 +44,13 @@ struct Cli {
 
     #[arg(short = 'R', long = "remove", action)]
     remove_after_compression: bool,
+
+    /// flatten directory structure by moving the output file into parent directories until its not the only file in the directory anymore.
+    /// can only be used in conjunction with --remove
+    /// can only be used if the input location is a directory, flatten will never move files outside that given location
+
+    #[arg(short, long, action)]
+    flatten: bool,
 }
 
 #[derive(ValueEnum, Clone, Eq, PartialEq, Debug)]
@@ -55,16 +63,30 @@ enum SourceRomFormat {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if !cli.location.exists() {
+    let location = canonicalize(cli.location.clone());
+
+    if !location.as_ref().map(|l| l.exists()).unwrap_or(false) {
         println!("The path {} doesn't exist.", cli.location.to_str().unwrap());
         return ExitCode::from(1);
     }
+
+    let location = location.unwrap();
 
     let fmt = match cli.format {
         SourceRomFormat::Psx => RomFormat::PSX,
         SourceRomFormat::Ps2 => RomFormat::PS2,
         SourceRomFormat::Psp => RomFormat::PSP,
     };
+
+    if cli.flatten && !cli.remove_after_compression {
+        println!("--flatten can only be used in conjunction with the --remove parameter.");
+        return ExitCode::from(1);
+    }
+
+    if cli.flatten && !location.is_dir() {
+        println!("--flatten can only be used if the input location is a directory");
+        return ExitCode::from(1);
+    }
 
     if cli.format == SourceRomFormat::Psx || cli.format == SourceRomFormat::Ps2 {
         match Command::new("chdman")
@@ -82,8 +104,8 @@ fn main() -> ExitCode {
         }
     }
 
-    if cli.location.is_file()
-        && !guess_file(&cli.location)
+    if location.is_file()
+        && !guess_file(&location)
             .map(|f| f.contains(fmt))
             .unwrap_or(false)
     {
@@ -94,20 +116,18 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    let converter = Converter::new(cli.threads)
+    let converter = Converter::new(&location, cli.threads)
         .verbose(cli.verbose)
-        .remove_after_compression(cli.remove_after_compression);
+        .remove_after_compression(cli.remove_after_compression)
+        .flatten(cli.flatten);
 
     println!(
         "Start ROM compression with {} simultaneous processes",
         cli.threads
     );
 
-    if cli.location.is_dir() {
-        for entry in WalkDir::new(cli.location)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+    if location.is_dir() {
+        for entry in WalkDir::new(location).into_iter().filter_map(|e| e.ok()) {
             if entry.file_type().is_file() {
                 let guess = guess_file(&entry.path().to_path_buf());
                 if guess.is_some_and(|f| f.contains(fmt)) {
@@ -120,8 +140,8 @@ fn main() -> ExitCode {
         }
     } else {
         converter.convert(
-            &cli.location,
-            (guess_file(&cli.location).unwrap() & RomFormat::FILE_FORMATS) | fmt,
+            &location,
+            (guess_file(&location).unwrap() & RomFormat::FILE_FORMATS) | fmt,
         );
     }
 

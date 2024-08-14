@@ -2,7 +2,7 @@ use crate::rom_format::RomFormat;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
 use std::{
-    fs::{copy, remove_file},
+    fs::{copy, remove_dir, remove_file, rename},
     path::PathBuf,
     process::{Command, Stdio},
     sync::{
@@ -29,10 +29,12 @@ pub struct Converter {
     output_file_size: Arc<AtomicUsize>,
     verbose: bool,
     remove_after_compression: bool,
+    flatten: bool,
+    root_directory: PathBuf,
 }
 
 impl Converter {
-    pub fn new(threads: usize) -> Self {
+    pub fn new(root: &PathBuf, threads: usize) -> Self {
         Self {
             available_threads: threads,
             thread_count: Arc::new(AtomicUsize::new(0)),
@@ -42,6 +44,8 @@ impl Converter {
             output_file_size: Arc::new(AtomicUsize::new(0)),
             verbose: false,
             remove_after_compression: false,
+            flatten: false,
+            root_directory: root.clone(),
         }
     }
 
@@ -52,6 +56,11 @@ impl Converter {
 
     pub fn remove_after_compression(mut self, remove: bool) -> Self {
         self.remove_after_compression = remove;
+        self
+    }
+
+    pub fn flatten(mut self, flatten: bool) -> Self {
+        self.flatten = flatten;
         self
     }
 
@@ -115,6 +124,8 @@ impl Converter {
         let p = file.clone();
         let rem = self.remove_after_compression;
         let verbose = self.verbose;
+        let flatten = self.flatten;
+        let root = self.root_directory.clone();
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
 
@@ -136,7 +147,25 @@ impl Converter {
                             .is_file()
                         {
                             if verbose {
-                                println!("Copy cue.txt to cue file temporarily");
+                                println!(
+                                    "Copy {} to {} temporarily",
+                                    p.parent()
+                                        .unwrap()
+                                        .join(format!(
+                                            "{}.{}",
+                                            p.file_stem().unwrap().to_str().unwrap(),
+                                            "cue.txt"
+                                        ))
+                                        .display(),
+                                    p.parent()
+                                        .unwrap()
+                                        .join(format!(
+                                            "{}.{}",
+                                            p.file_stem().unwrap().to_str().unwrap(),
+                                            "cue"
+                                        ))
+                                        .display()
+                                );
                             }
                             let _ = copy(
                                 p.parent().unwrap().join(format!(
@@ -206,6 +235,47 @@ impl Converter {
                     }
                 };
 
+            let flatten_directories = |file: &PathBuf, root: &PathBuf, verbose: bool| {
+                let mut dir = file.parent();
+
+                while dir.is_some_and(|dir| {
+                    dir.starts_with(root) && dir.read_dir().is_ok_and(|rd| rd.count() == 1)
+                }) {
+                    dir = dir.unwrap().parent();
+                }
+
+                if dir.is_some() && dir != file.parent() {
+                    if verbose {
+                        println!(
+                            "Moving {} to {}",
+                            file.display(),
+                            dir.unwrap().join(file.file_name().unwrap()).display()
+                        );
+                    }
+
+                    if let Err(e) = rename(file, dir.unwrap().join(file.file_name().unwrap())) {
+                        if verbose {
+                            println!("Error moving file: {:?}", e);
+                        }
+                        return;
+                    }
+
+                    let mut current = file.parent();
+                    while current != dir && current.is_some() {
+                        if verbose {
+                            println!("Removing empty directory {}", current.unwrap().display());
+                        }
+                        if let Err(e) = remove_dir(current.as_ref().unwrap()) {
+                            if verbose {
+                                println!("Error removing directory: {:?}", e);
+                            }
+                            return;
+                        }
+                        current = current.unwrap().parent();
+                    }
+                }
+            };
+
             let files = prepare_files(&p, format, verbose);
 
             is_ptr.fetch_add(
@@ -236,14 +306,19 @@ impl Converter {
                     .status();
             }
 
-            cleanup(files, rem, verbose);
-
-            println!("Finished compression of {}", out_file.display());
-
             os_ptr.fetch_add(
                 out_file.size_on_disk().unwrap().try_into().unwrap(),
                 Ordering::Relaxed,
             );
+
+            cleanup(files, rem, verbose);
+
+            if flatten {
+                flatten_directories(&out_file, &root, verbose);
+            }
+
+            println!("Finished compression of {}", out_file.display());
+
             p_ptr.fetch_add(1, Ordering::Relaxed);
             t_ptr.fetch_sub(1, Ordering::Relaxed);
         });
