@@ -9,7 +9,7 @@ use search::guess_file;
 use std::{
     io::ErrorKind,
     path::PathBuf,
-    process::{Command, ExitCode},
+    process::{Command, ExitCode, Stdio},
 };
 use walkdir::WalkDir;
 
@@ -56,7 +56,11 @@ fn main() -> ExitCode {
     };
 
     if cli.format == SourceRomFormat::Psx || cli.format == SourceRomFormat::Ps2 {
-        match Command::new("chdman").spawn() {
+        match Command::new("chdman")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
             Err(e) => {
                 if let ErrorKind::NotFound = e.kind() {
                     println!("You'll need to have CHDMAN available on your PATH if you want to convert these ROMs. Please run this application from Docker or install CHDMAN manually and try again.");

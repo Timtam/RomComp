@@ -2,7 +2,7 @@ use crate::rom_format::RomFormat;
 use std::{
     fs::{copy, remove_file},
     path::PathBuf,
-    process::Command,
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -29,6 +29,18 @@ impl Converter {
         }
     }
 
+    pub fn get_output_file_name(file: &PathBuf, format: RomFormat) -> Option<PathBuf> {
+        if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
+            Some(file.parent().unwrap().join(format!(
+                "{}.{}",
+                file.file_stem().unwrap().to_str().unwrap(),
+                "chd"
+            )))
+        } else {
+            None
+        }
+    }
+
     pub fn finish(&self) {
         while self.thread_count.load(Ordering::Relaxed) > 0 {
             std::thread::sleep(Duration::from_millis(50));
@@ -36,6 +48,10 @@ impl Converter {
     }
 
     pub fn convert(&self, file: &PathBuf, format: RomFormat) {
+        if Converter::get_output_file_name(file, format).map(|f| f.is_file()).unwrap_or(false) {
+            return;
+        }
+
         while self.thread_count.load(Ordering::Relaxed) >= num_cpus::get() {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -126,21 +142,17 @@ impl Converter {
                 p
             };
 
-            if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
-                let out_file = in_file.parent().unwrap().join(format!(
-                    "{}.{}",
-                    in_file.file_stem().unwrap().to_str().unwrap(),
-                    "chd",
-                ));
+            let out_file = Converter::get_output_file_name(&in_file, format).unwrap();
 
-                let mut cmd = Command::new("chdman");
-                cmd.current_dir(&std::env::current_dir().unwrap())
+            if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
+                let _ = Command::new("chdman")
+                    .current_dir(&std::env::current_dir().unwrap())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
                     .arg("createcd")
                     .args(["-i", in_file.to_str().unwrap()])
-                    .args(["-o", out_file.to_str().unwrap()]);
-
-                println!("{:?}", cmd);
-                let _ = cmd.output();
+                    .args(["-o", out_file.to_str().unwrap()])
+                    .status();
             }
 
             cleanup(files);
