@@ -24,7 +24,7 @@ FROM alpine:3.20
 
 RUN echo "@testing https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
    apk update && \
-    apk add --no-cache mame-tools@testing
+    apk add --no-cache dolphin-emu mame-tools@testing
 
 COPY --from=romcomp_builder /app/romcomp/romcomp /usr/bin/
 
