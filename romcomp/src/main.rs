@@ -2,8 +2,10 @@ mod convert;
 mod rom_format;
 mod search;
 
+use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use convert::Converter;
+use crossbeam_channel::{bounded, Receiver};
 use rom_format::RomFormat;
 use search::guess_file;
 use std::{
@@ -60,14 +62,25 @@ enum SourceRomFormat {
     Psp,
 }
 
-fn main() -> ExitCode {
+fn ctrl_channel() -> Result<Receiver<()>> {
+    let (sender, receiver) = bounded(100);
+
+    ctrlc::set_handler(move || {
+        let _ = sender.send(());
+    })?;
+
+    Ok(receiver)
+}
+
+fn main() -> Result<ExitCode> {
+    let ctrl_c_events = ctrl_channel()?;
     let cli = Cli::parse();
 
     let location = canonicalize(cli.location.clone());
 
     if !location.as_ref().map(|l| l.exists()).unwrap_or(false) {
         println!("The path {} doesn't exist.", cli.location.to_str().unwrap());
-        return ExitCode::from(1);
+        return Ok(ExitCode::from(1));
     }
 
     let location = location.unwrap();
@@ -80,12 +93,12 @@ fn main() -> ExitCode {
 
     if cli.flatten && !cli.remove_after_compression {
         println!("--flatten can only be used in conjunction with the --remove parameter.");
-        return ExitCode::from(1);
+        return Ok(ExitCode::from(1));
     }
 
     if cli.flatten && !location.is_dir() {
         println!("--flatten can only be used if the input location is a directory");
-        return ExitCode::from(1);
+        return Ok(ExitCode::from(1));
     }
 
     if cli.format == SourceRomFormat::Psx || cli.format == SourceRomFormat::Ps2 {
@@ -97,7 +110,7 @@ fn main() -> ExitCode {
             Err(e) => {
                 if let ErrorKind::NotFound = e.kind() {
                     println!("You'll need to have CHDMAN available on your PATH if you want to convert these ROMs. Please run this application from Docker or install CHDMAN manually and try again.");
-                    return ExitCode::from(2);
+                    return Ok(ExitCode::from(2));
                 }
             }
             _ => (),
@@ -113,10 +126,10 @@ fn main() -> ExitCode {
             "The input file isn't recognized as proper file format for a {:?} rom",
             cli.format
         );
-        return ExitCode::from(1);
+        return Ok(ExitCode::from(1));
     }
 
-    let converter = Converter::new(&location, cli.threads)
+    let converter = Converter::new(&location, cli.threads, ctrl_c_events.clone())
         .verbose(cli.verbose)
         .remove_after_compression(cli.remove_after_compression)
         .flatten(cli.flatten);
@@ -131,6 +144,9 @@ fn main() -> ExitCode {
             if entry.file_type().is_file() {
                 let guess = guess_file(&entry.path().to_path_buf());
                 if guess.is_some_and(|f| f.contains(fmt)) {
+                    if ctrl_c_events.try_recv().is_ok() {
+                        break;
+                    }
                     converter.convert(
                         &entry.path().to_path_buf(),
                         (guess.unwrap() & RomFormat::FILE_FORMATS) | fmt,
@@ -147,5 +163,5 @@ fn main() -> ExitCode {
 
     converter.finish();
 
-    ExitCode::from(0)
+    Ok(ExitCode::from(0))
 }

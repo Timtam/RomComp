@@ -1,4 +1,5 @@
 use crate::rom_format::RomFormat;
+use crossbeam_channel::Receiver;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
 use std::{
@@ -18,6 +19,8 @@ enum FileSource {
     Input,
     /// temporary, created by romcomp
     Temporary,
+    /// the compression target, created during the conversion
+    Output,
 }
 
 pub struct Converter {
@@ -31,10 +34,11 @@ pub struct Converter {
     remove_after_compression: bool,
     flatten: bool,
     root_directory: PathBuf,
+    interrupt: Receiver<()>,
 }
 
 impl Converter {
-    pub fn new(root: &PathBuf, threads: usize) -> Self {
+    pub fn new(root: &PathBuf, threads: usize, interrupt: Receiver<()>) -> Self {
         Self {
             available_threads: threads,
             thread_count: Arc::new(AtomicUsize::new(0)),
@@ -46,6 +50,7 @@ impl Converter {
             remove_after_compression: false,
             flatten: false,
             root_directory: root.clone(),
+            interrupt,
         }
     }
 
@@ -115,6 +120,10 @@ impl Converter {
 
         while self.thread_count.load(Ordering::Relaxed) >= self.available_threads {
             std::thread::sleep(Duration::from_millis(50));
+
+            if self.interrupt.try_recv().is_ok() {
+                return;
+            }
         }
 
         let t_ptr = Arc::clone(&self.thread_count);
@@ -126,6 +135,7 @@ impl Converter {
         let verbose = self.verbose;
         let flatten = self.flatten;
         let root = self.root_directory.clone();
+        let itrp = self.interrupt.clone();
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
 
@@ -216,24 +226,35 @@ impl Converter {
                     }
                 };
 
-            let cleanup =
-                |f: Vec<(PathBuf, FileSource)>, remove_after_compression: bool, verbose: bool| {
-                    for (file, source) in f.into_iter() {
-                        if source == FileSource::Temporary {
-                            if verbose {
-                                println!("Deleting temporary file {}", file.display());
-                            }
-
-                            let _ = remove_file(file);
-                        } else if source == FileSource::Input && remove_after_compression {
-                            if verbose {
-                                println!("Deleting input file {}", file.display());
-                            }
-
-                            let _ = remove_file(file);
+            let cleanup = |f: Vec<(PathBuf, FileSource)>,
+                           remove_after_compression: bool,
+                           interrupted: bool,
+                           verbose: bool| {
+                for (file, source) in f.into_iter() {
+                    if source == FileSource::Temporary {
+                        if verbose {
+                            println!("Deleting temporary file {}", file.display());
                         }
+
+                        let _ = remove_file(file);
+                    } else if source == FileSource::Input
+                        && remove_after_compression
+                        && !interrupted
+                    {
+                        if verbose {
+                            println!("Deleting input file {}", file.display());
+                        }
+
+                        let _ = remove_file(file);
+                    } else if source == FileSource::Output && interrupted {
+                        if verbose {
+                            println!("Deleting incomplete output file {}", file.display());
+                        }
+
+                        let _ = remove_file(file);
                     }
-                };
+                }
+            };
 
             let flatten_directories = |file: &PathBuf, root: &PathBuf, verbose: bool| {
                 let mut dir = file.parent();
@@ -276,12 +297,8 @@ impl Converter {
                 }
             };
 
-            let files = prepare_files(&p, format, verbose);
-
-            is_ptr.fetch_add(
-                p.size_on_disk().unwrap().try_into().unwrap(),
-                Ordering::Relaxed,
-            );
+            let mut files = prepare_files(&p, format, verbose);
+            let is = p.size_on_disk().unwrap();
 
             let in_file = if format.contains(RomFormat::BIN) {
                 p.parent().unwrap().join(format!(
@@ -294,32 +311,56 @@ impl Converter {
             };
 
             let out_file = Converter::get_output_file_name(&in_file, format).unwrap();
+            let mut interrupted = false;
+
+            files.push((out_file.clone(), FileSource::Output));
 
             if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
-                let _ = Command::new("chdman")
+                let mut proc = Command::new("chdman")
                     .current_dir(&std::env::current_dir().unwrap())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
                     .arg("createcd")
                     .args(["-i", in_file.to_str().unwrap()])
                     .args(["-o", out_file.to_str().unwrap()])
-                    .status();
+                    .spawn()
+                    .unwrap();
+
+                loop {
+                    let status = proc.try_wait();
+                    if status.as_ref().is_ok_and(|e| *e == None) {
+                        std::thread::sleep(Duration::from_millis(50));
+                        if itrp.try_recv().is_ok() {
+                            interrupted = true;
+                            let _ = proc.kill();
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    } else {
+                        interrupted = true;
+                        break;
+                    }
+                }
             }
 
-            os_ptr.fetch_add(
-                out_file.size_on_disk().unwrap().try_into().unwrap(),
-                Ordering::Relaxed,
-            );
+            cleanup(files, rem, interrupted, verbose);
 
-            cleanup(files, rem, verbose);
-
-            if flatten {
+            if flatten && !interrupted {
                 flatten_directories(&out_file, &root, verbose);
             }
 
-            println!("Finished compression of {}", out_file.display());
+            if !interrupted {
+                println!("Finished compression of {}", out_file.display());
+                is_ptr.fetch_add(is.try_into().unwrap(), Ordering::Relaxed);
+                os_ptr.fetch_add(
+                    out_file.size_on_disk().unwrap().try_into().unwrap(),
+                    Ordering::Relaxed,
+                );
+                p_ptr.fetch_add(1, Ordering::Relaxed);
+            } else {
+                println!("Aborted compression of {}", out_file.display());
+            }
 
-            p_ptr.fetch_add(1, Ordering::Relaxed);
             t_ptr.fetch_sub(1, Ordering::Relaxed);
         });
     }
