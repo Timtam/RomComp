@@ -48,7 +48,7 @@ struct Cli {
     remove_after_compression: bool,
 
     /// flatten directory structure by moving the output file into parent directories until its not the only file in the directory anymore.
-    /// can only be used in conjunction with --remove
+    /// can only be used in conjunction with --remove,
     /// can only be used if the input location is a directory, flatten will never move files outside that given location
 
     #[arg(short, long, action)]
@@ -144,7 +144,7 @@ fn main() -> Result<ExitCode> {
             if entry.file_type().is_file() {
                 let guess = guess_file(&entry.path().to_path_buf());
                 if guess.is_some_and(|f| f.contains(fmt)) {
-                    if ctrl_c_events.try_recv().is_ok() {
+                    if !ctrl_c_events.is_empty() {
                         break;
                     }
                     converter.convert(

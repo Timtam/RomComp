@@ -123,7 +123,7 @@ impl Converter {
         while self.thread_count.load(Ordering::Relaxed) >= self.available_threads {
             std::thread::sleep(Duration::from_millis(50));
 
-            if itrp.try_recv().is_ok() {
+            if !itrp.is_empty() {
                 return;
             }
         }
@@ -331,7 +331,7 @@ impl Converter {
                     let status = proc.try_wait();
                     if status.as_ref().is_ok_and(|e| *e == None) {
                         std::thread::sleep(Duration::from_millis(50));
-                        if itrp.try_recv().is_ok() {
+                        if !itrp.is_empty() {
                             interrupted = true;
                             let _ = proc.kill();
                             break;
