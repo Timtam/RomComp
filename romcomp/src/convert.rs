@@ -118,10 +118,12 @@ impl Converter {
             return;
         }
 
+        let itrp = self.interrupt.clone();
+
         while self.thread_count.load(Ordering::Relaxed) >= self.available_threads {
             std::thread::sleep(Duration::from_millis(50));
 
-            if self.interrupt.try_recv().is_ok() {
+            if itrp.try_recv().is_ok() {
                 return;
             }
         }
@@ -135,7 +137,6 @@ impl Converter {
         let verbose = self.verbose;
         let flatten = self.flatten;
         let root = self.root_directory.clone();
-        let itrp = self.interrupt.clone();
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
 
@@ -336,6 +337,11 @@ impl Converter {
                             break;
                         }
                         std::thread::sleep(Duration::from_millis(50));
+                    } else if status
+                        .as_ref()
+                        .is_ok_and(|e| e.is_some_and(|e| e.success()))
+                    {
+                        break;
                     } else {
                         interrupted = true;
                         break;
