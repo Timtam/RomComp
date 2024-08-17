@@ -349,6 +349,8 @@ impl Converter {
                 }
             }
 
+            let os = out_file.size_on_disk().unwrap();
+
             cleanup(files, rem, interrupted, verbose);
 
             if flatten && !interrupted {
@@ -358,10 +360,7 @@ impl Converter {
             if !interrupted {
                 println!("Finished compression of {}", out_file.display());
                 is_ptr.fetch_add(is.try_into().unwrap(), Ordering::Relaxed);
-                os_ptr.fetch_add(
-                    out_file.size_on_disk().unwrap().try_into().unwrap(),
-                    Ordering::Relaxed,
-                );
+                os_ptr.fetch_add(os.try_into().unwrap(), Ordering::Relaxed);
                 p_ptr.fetch_add(1, Ordering::Relaxed);
             } else {
                 println!("Aborted compression of {}", out_file.display());
