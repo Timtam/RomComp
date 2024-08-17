@@ -1,11 +1,11 @@
 use crate::rom_format::RomFormat;
 use crossbeam_channel::Receiver;
+use duct::cmd;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
 use std::{
     fs::{copy, remove_dir, remove_file, rename},
     path::PathBuf,
-    process::{Command, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -317,15 +317,19 @@ impl Converter {
             files.push((out_file.clone(), FileSource::Output));
 
             if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
-                let mut proc = Command::new("chdman")
-                    .current_dir(&std::env::current_dir().unwrap())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .arg("createcd")
-                    .args(["-i", in_file.to_str().unwrap()])
-                    .args(["-o", out_file.to_str().unwrap()])
-                    .spawn()
-                    .unwrap();
+                let proc = cmd!(
+                    "chdman",
+                    "createcd",
+                    "-i",
+                    in_file.to_str().unwrap(),
+                    "-o",
+                    out_file.to_str().unwrap()
+                )
+                .dir(std::env::current_dir().unwrap())
+                .stderr_capture()
+                .stdout_capture()
+                .start()
+                .unwrap();
 
                 loop {
                     let status = proc.try_wait();
@@ -339,7 +343,7 @@ impl Converter {
                         std::thread::sleep(Duration::from_millis(50));
                     } else if status
                         .as_ref()
-                        .is_ok_and(|e| e.is_some_and(|e| e.success()))
+                        .is_ok_and(|e| e.is_some_and(|e| e.status.success()))
                     {
                         break;
                     } else {
