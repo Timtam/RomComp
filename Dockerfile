@@ -31,6 +31,18 @@ RUN apk update && \
     git checkout tags/v1.13.0 && \
     make
 
+FROM golang:1.19-alpine AS rom64_builder
+
+WORKDIR /rom64
+
+RUN apk update && \
+    apk add --no-cache git && \
+    git clone https://github.com/mroach/rom64 && \
+    cd rom64 && \
+    git checkout tags/v0.5.4 && \
+    go get -d && \
+    go build -ldflags "-s -w" main.go
+
 FROM alpine:3.20
 
 RUN echo "@testing https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
@@ -38,6 +50,7 @@ RUN echo "@testing https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/a
     apk add --no-cache dolphin-emu libuv mame-tools@testing
 
 COPY --from=maxcso_builder /maxcso/maxcso/maxcso /usr/bin/
+COPY --from=rom64_builder /rom64/rom64/main /usr/bin/rom64
 COPY --from=romcomp_builder /app/romcomp/romcomp /usr/bin/
 
 WORKDIR /roms
