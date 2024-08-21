@@ -31,6 +31,9 @@ pub fn guess_file(path: &PathBuf) -> Option<RomFormat> {
                     }
                 }
                 "iso" => Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::PSP | RomFormat::ISO),
+                "n64" => Some(RomFormat::N64 | RomFormat::Nintendo64),
+                "v64" => Some(RomFormat::V64 | RomFormat::Nintendo64),
+                "z64" => Some(RomFormat::Z64 | RomFormat::Nintendo64),
                 _ => None,
             }
         } else {

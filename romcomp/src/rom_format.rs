@@ -12,6 +12,12 @@ bitflags! {
         const BIN = 0b1;
         /// iso file
         const ISO = 0b10;
+        /// Nintendo 64 ROM
+        const N64 = 0b100;
+        /// Nintendo 64 ROM
+        const V64 = 0b1000;
+        /// Nintendo 64 ROM
+        const Z64 = 0b10000;
 
         /// the file format flags
         const FILE_FORMATS = 0b11111111;
@@ -22,5 +28,7 @@ bitflags! {
         const PS2 = 0b1000000000;
         /// an iso
         const PSP = 0b10000000000;
+        /// any of the 3 n64 formats (n64, v64 or z64)
+        const Nintendo64 = 0b100000000000;
     }
 }

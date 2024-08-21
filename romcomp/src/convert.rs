@@ -4,7 +4,8 @@ use duct::cmd;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
 use std::{
-    fs::{copy, remove_dir, remove_file, rename},
+    fs::{copy, remove_dir, remove_file, rename, File},
+    io::{Read, Write},
     path::PathBuf,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -12,6 +13,7 @@ use std::{
     },
     time::Duration,
 };
+use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum FileSource {
@@ -75,6 +77,12 @@ impl Converter {
                 "{}.{}",
                 file.file_stem().unwrap().to_str().unwrap(),
                 "chd"
+            )))
+        } else if format.contains(RomFormat::Nintendo64) {
+            Some(file.parent().unwrap().join(format!(
+                "{}.{}",
+                file.file_stem().unwrap().to_str().unwrap(),
+                "zip"
             )))
         } else {
             None
@@ -222,6 +230,19 @@ impl Converter {
                                 ),
                             ]
                         }
+                    } else if format.contains(RomFormat::Nintendo64) {
+                        let mut files = vec![(p.clone(), FileSource::Input)];
+                        if !format.contains(RomFormat::Z64) {
+                            files.push((
+                                p.parent().unwrap().join(format!(
+                                    "{}.{}",
+                                    p.file_stem().unwrap().to_str().unwrap(),
+                                    "z64"
+                                )),
+                                FileSource::Temporary,
+                            ));
+                        }
+                        files
                     } else {
                         vec![(p.clone(), FileSource::Input)]
                     }
@@ -316,20 +337,28 @@ impl Converter {
 
             files.push((out_file.clone(), FileSource::Output));
 
-            if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
-                let proc = cmd!(
+            let expression = if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
+                Some(cmd!(
                     "chdman",
                     "createcd",
                     "-i",
                     in_file.to_str().unwrap(),
                     "-o",
                     out_file.to_str().unwrap()
-                )
-                .dir(std::env::current_dir().unwrap())
-                .stderr_capture()
-                .stdout_capture()
-                .start()
-                .unwrap();
+                ))
+            } else if format.contains(RomFormat::Nintendo64) && !format.contains(RomFormat::Z64) {
+                Some(cmd!("rom64", "convert", in_file.to_str().unwrap(),))
+            } else {
+                None
+            };
+
+            if let Some(e) = expression {
+                let proc = e
+                    .dir(std::env::current_dir().unwrap())
+                    .stderr_capture()
+                    .stdout_capture()
+                    .start()
+                    .unwrap();
 
                 loop {
                     let status = proc.try_wait();
@@ -353,7 +382,65 @@ impl Converter {
                 }
             }
 
-            let os = out_file.size_on_disk().unwrap();
+            if !interrupted && format.contains(RomFormat::Nintendo64) {
+                let temp_file = &files
+                    .iter()
+                    .find(|(_, s)| *s == FileSource::Temporary)
+                    .unwrap_or_else(|| {
+                        &files.iter().find(|(_, s)| *s == FileSource::Input).unwrap()
+                    })
+                    .0;
+
+                if verbose {
+                    println!("Zipping {} to {}", temp_file.display(), out_file.display());
+                }
+
+                let mut ifh = File::open(&temp_file).unwrap();
+                let ofh = File::create(&out_file).unwrap();
+
+                let mut zip = ZipWriter::new(ofh);
+
+                let _ = zip
+                    .start_file(
+                        temp_file.file_name().unwrap().to_str().unwrap(),
+                        SimpleFileOptions::default()
+                            .compression_method(CompressionMethod::Deflated),
+                    )
+                    .unwrap();
+
+                let mut buf = [0_u8; 1024 * 1024];
+
+                'reader: while let Ok(chunk) = ifh.read(&mut buf) {
+                    if chunk == 0 {
+                        break;
+                    }
+
+                    let mut offset: usize = 0;
+
+                    while offset < chunk {
+                        if !itrp.is_empty() {
+                            interrupted = true;
+                            break 'reader;
+                        }
+
+                        let written = zip.write(&buf[offset..chunk]);
+
+                        if written.is_err() {
+                            break 'reader;
+                        }
+
+                        offset += written.unwrap();
+                    }
+                }
+
+                let _ = zip.flush();
+
+                let _ = zip.finish();
+
+                drop(ifh);
+            }
+
+            let os = out_file.size_on_disk().unwrap_or(0);
 
             cleanup(files, rem, interrupted, verbose);
 

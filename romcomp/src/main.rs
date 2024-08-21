@@ -57,6 +57,7 @@ struct Cli {
 
 #[derive(ValueEnum, Clone, Eq, PartialEq, Debug)]
 enum SourceRomFormat {
+    N64,
     Psx,
     Ps2,
     Psp,
@@ -86,6 +87,7 @@ fn main() -> Result<ExitCode> {
     let location = location.unwrap();
 
     let fmt = match cli.format {
+        SourceRomFormat::N64 => RomFormat::Nintendo64,
         SourceRomFormat::Psx => RomFormat::PSX,
         SourceRomFormat::Ps2 => RomFormat::PS2,
         SourceRomFormat::Psp => RomFormat::PSP,
@@ -110,6 +112,22 @@ fn main() -> Result<ExitCode> {
             Err(e) => {
                 if let ErrorKind::NotFound = e.kind() {
                     println!("You'll need to have CHDMAN available on your PATH if you want to convert these ROMs. Please run this application from Docker or install CHDMAN manually and try again.");
+                    return Ok(ExitCode::from(2));
+                }
+            }
+            _ => (),
+        }
+    }
+
+    if cli.format == SourceRomFormat::N64 {
+        match Command::new("rom64")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Err(e) => {
+                if let ErrorKind::NotFound = e.kind() {
+                    println!("You'll need to have ROM64 available on your PATH if you want to convert these ROMs. Please run this application from Docker or install ROM64 manually and try again.");
                     return Ok(ExitCode::from(2));
                 }
             }
