@@ -1,12 +1,14 @@
 use crate::rom_format::RomFormat;
 use crossbeam_channel::Receiver;
+use cue::cd::CD;
 use duct::cmd;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
+use lazy_regex::regex_replace;
 use std::{
     fs::{copy, remove_dir, remove_file, rename, File},
     io::{Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -15,7 +17,7 @@ use std::{
 };
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FileSource {
     /// input to romcomp, not created by us
     Input,
@@ -73,11 +75,12 @@ impl Converter {
 
     pub fn get_output_file_name(file: &PathBuf, format: RomFormat) -> Option<PathBuf> {
         if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
-            Some(file.parent().unwrap().join(format!(
-                "{}.{}",
-                file.file_stem().unwrap().to_str().unwrap(),
-                "chd"
-            )))
+            Some(
+                Path::new(
+                    regex_replace!(r"iso|(cue(\.txt)?)$"i, file.to_str().unwrap(), "chd").as_ref(),
+                )
+                .to_path_buf(),
+            )
         } else if format.contains(RomFormat::Nintendo64) {
             Some(file.parent().unwrap().join(format!(
                 "{}.{}",
@@ -156,80 +159,42 @@ impl Converter {
             let prepare_files =
                 |p: &PathBuf, f: RomFormat, verbose: bool| -> Vec<(PathBuf, FileSource)> {
                     if f.contains(RomFormat::BIN) {
-                        if p.parent()
+                        let mut files = vec![(p.clone(), FileSource::Input)];
+
+                        if p.file_name()
                             .unwrap()
-                            .join(format!(
-                                "{}.{}",
-                                p.file_stem().unwrap().to_str().unwrap(),
-                                "cue.txt"
-                            ))
-                            .is_file()
+                            .to_str()
+                            .unwrap()
+                            .ends_with("cue.txt")
                         {
+                            let new = Path::new(
+                                regex_replace!(r"\.txt$"i, p.to_str().unwrap(), "").as_ref(),
+                            )
+                            .to_path_buf();
                             if verbose {
-                                println!(
-                                    "Copy {} to {} temporarily",
-                                    p.parent()
-                                        .unwrap()
-                                        .join(format!(
-                                            "{}.{}",
-                                            p.file_stem().unwrap().to_str().unwrap(),
-                                            "cue.txt"
-                                        ))
-                                        .display(),
-                                    p.parent()
-                                        .unwrap()
-                                        .join(format!(
-                                            "{}.{}",
-                                            p.file_stem().unwrap().to_str().unwrap(),
-                                            "cue"
-                                        ))
-                                        .display()
-                                );
+                                println!("Copy {} to {} temporarily", p.display(), new.display());
                             }
-                            let _ = copy(
-                                p.parent().unwrap().join(format!(
-                                    "{}.{}",
-                                    p.file_stem().unwrap().to_str().unwrap(),
-                                    "cue.txt"
-                                )),
-                                p.parent().unwrap().join(format!(
-                                    "{}.{}",
-                                    p.file_stem().unwrap().to_str().unwrap(),
-                                    "cue"
-                                )),
-                            );
-                            vec![
-                                (p.clone(), FileSource::Input),
-                                (
-                                    p.parent().unwrap().join(format!(
-                                        "{}.{}",
-                                        p.file_stem().unwrap().to_str().unwrap(),
-                                        "cue.txt"
-                                    )),
-                                    FileSource::Input,
-                                ),
-                                (
-                                    p.parent().unwrap().join(format!(
-                                        "{}.{}",
-                                        p.file_stem().unwrap().to_str().unwrap(),
-                                        "cue"
-                                    )),
-                                    FileSource::Temporary,
-                                ),
-                            ]
-                        } else {
-                            vec![
-                                (p.clone(), FileSource::Input),
-                                (
-                                    p.parent().unwrap().join(format!(
-                                        "{}.{}",
-                                        p.file_stem().unwrap().to_str().unwrap(),
-                                        "cue"
-                                    )),
-                                    FileSource::Input,
-                                ),
-                            ]
+
+                            let _ = copy(p, &new);
+
+                            files.push((new, FileSource::Temporary));
                         }
+
+                        files.append(
+                            &mut CD::parse_file(p.clone())
+                                .unwrap()
+                                .tracks()
+                                .into_iter()
+                                .map(|t| {
+                                    (
+                                        p.parent().unwrap().join(t.get_filename()),
+                                        FileSource::Input,
+                                    )
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+
+                        files
                     } else if format.contains(RomFormat::Nintendo64) {
                         let mut files = vec![(p.clone(), FileSource::Input)];
                         if !format.contains(RomFormat::Z64) {
@@ -320,14 +285,18 @@ impl Converter {
             };
 
             let mut files = prepare_files(&p, format, verbose);
-            let is = p.size_on_disk().unwrap();
+
+            let mut is: u64 = 0;
+
+            for (f, s) in files.iter() {
+                if *s == FileSource::Input {
+                    is += f.size_on_disk().unwrap();
+                }
+            }
 
             let in_file = if format.contains(RomFormat::BIN) {
-                p.parent().unwrap().join(format!(
-                    "{}.{}",
-                    p.file_stem().unwrap().to_str().unwrap(),
-                    "cue",
-                ))
+                Path::new(regex_replace!(r"\.txt$"i, p.to_str().unwrap(), "").as_ref())
+                    .to_path_buf()
             } else {
                 p
             };

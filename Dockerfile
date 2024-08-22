@@ -1,5 +1,16 @@
 FROM clux/muslrust:stable AS romcomp_builder
 
+WORKDIR /libcue
+
+RUN apt-get update && \
+    apt-get install -y bison cmake flex gcc git libtool && \
+    git clone https://github.com/lipnitsk/libcue.git && \
+    cd libcue && \
+    git checkout tags/v2.3.0 && \
+    mkdir build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release ../ && \
+    make && make install
+
 WORKDIR /app
 
 RUN USER=root cargo new --bin romcomp

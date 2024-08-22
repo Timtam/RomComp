@@ -1,40 +1,33 @@
 use crate::rom_format::RomFormat;
+use cue::cd::CD;
 use std::path::PathBuf;
 
 pub fn guess_file(path: &PathBuf) -> Option<RomFormat> {
-    path.extension().and_then(|e| {
+    path.file_name().and_then(|e| {
         if let Some(e) = e.to_str() {
-            match e.to_lowercase().as_ref() {
-                "bin" => {
-                    if path
-                        .parent()
-                        .unwrap()
-                        .join(format!(
-                            "{}.{}",
-                            path.file_stem().unwrap().to_str().unwrap(),
-                            "cue"
-                        ))
-                        .is_file()
-                        || path
-                            .parent()
-                            .unwrap()
-                            .join(format!(
-                                "{}.{}",
-                                path.file_stem().unwrap().to_str().unwrap(),
-                                "cue.txt"
-                            ))
-                            .is_file()
-                    {
+            if path.is_file()
+                && (e.to_lowercase().ends_with("cue") || e.to_lowercase().ends_with("cue.txt"))
+            {
+                CD::parse_file(path.clone()).ok().and_then(|cue| {
+                    if cue.tracks().iter().all(|t| {
+                        t.get_filename().to_lowercase().ends_with("bin")
+                            && path.parent().unwrap().join(t.get_filename()).is_file()
+                    }) {
                         Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::BIN)
                     } else {
                         None
                     }
-                }
-                "iso" => Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::PSP | RomFormat::ISO),
-                "n64" => Some(RomFormat::N64 | RomFormat::Nintendo64),
-                "v64" => Some(RomFormat::V64 | RomFormat::Nintendo64),
-                "z64" => Some(RomFormat::Z64 | RomFormat::Nintendo64),
-                _ => None,
+                })
+            } else if path.is_file() && e.to_lowercase().ends_with("iso") {
+                Some(RomFormat::PSX | RomFormat::PS2 | RomFormat::PSP | RomFormat::ISO)
+            } else if path.is_file() && e.to_lowercase().ends_with("n64") {
+                Some(RomFormat::N64 | RomFormat::Nintendo64)
+            } else if e.to_lowercase().ends_with("v64") {
+                Some(RomFormat::V64 | RomFormat::Nintendo64)
+            } else if e.to_lowercase().ends_with("z64") {
+                Some(RomFormat::Z64 | RomFormat::Nintendo64)
+            } else {
+                None
             }
         } else {
             None
