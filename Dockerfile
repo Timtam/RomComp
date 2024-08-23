@@ -3,12 +3,12 @@ FROM clux/muslrust:stable AS romcomp_builder
 WORKDIR /libcue
 
 RUN apt-get update && \
-    apt-get install -y bison cmake flex gcc git libtool && \
+    apt-get install -y bison flex git && \
     git clone https://github.com/lipnitsk/libcue.git && \
     cd libcue && \
     git checkout tags/v2.3.0 && \
     mkdir build && cd build && \
-    cmake -DCMAKE_BUILD_TYPE=Release ../ && \
+    CC="musl-gcc -fPIC -pie" LDFLAGS="-L$PREFIX/lib" CFLAGS="-I$PREFIX/include" cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=$PREFIX ../ && \
     make && make install
 
 WORKDIR /app
@@ -25,7 +25,7 @@ RUN cargo build --release && \
 COPY romcomp/src ./src
 
 RUN find target/ -type f -name "romcomp*" -path "*-unknown-linux-musl/release/deps/*" -exec rm {} \;
-RUN cargo build --release
+RUN RUSTFLAGS='-L /musl/lib' cargo build --release
 
 # copy file to fixed folder
 
