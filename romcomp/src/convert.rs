@@ -81,6 +81,12 @@ impl Converter {
                 )
                 .to_path_buf(),
             )
+        } else if format.contains(RomFormat::PSP) {
+            Some(file.parent().unwrap().join(format!(
+                "{}.{}",
+                file.file_stem().unwrap().to_str().unwrap(),
+                "cso"
+            )))
         } else if format.contains(RomFormat::Nintendo64) {
             Some(file.parent().unwrap().join(format!(
                 "{}.{}",
@@ -315,6 +321,8 @@ impl Converter {
                     "-o",
                     out_file.to_str().unwrap()
                 ))
+            } else if format.contains(RomFormat::PSP) {
+                Some(cmd!("maxcso", in_file.to_str().unwrap(),))
             } else if format.contains(RomFormat::Nintendo64) && !format.contains(RomFormat::Z64) {
                 Some(cmd!("rom64", "convert", in_file.to_str().unwrap(),))
             } else {
