@@ -74,25 +74,26 @@ impl Converter {
     }
 
     pub fn get_output_file_name(file: &PathBuf, format: RomFormat) -> Option<PathBuf> {
-        if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
+        if format.contains(RomFormat::PlayStationX) || format.contains(RomFormat::PlayStation2) {
             Some(
                 Path::new(
                     regex_replace!(r"iso|(cue(\.txt)?)$"i, file.to_str().unwrap(), "chd").as_ref(),
                 )
                 .to_path_buf(),
             )
-        } else if format.contains(RomFormat::PSP) {
+        } else if format.contains(RomFormat::PlayStationPortable) {
             Some(file.parent().unwrap().join(format!(
                 "{}.{}",
                 file.file_stem().unwrap().to_str().unwrap(),
                 "cso"
             )))
-        } else if format.contains(RomFormat::Nintendo64) {
-            Some(file.parent().unwrap().join(format!(
-                "{}.{}",
-                file.file_stem().unwrap().to_str().unwrap(),
-                "zip"
-            )))
+        } else if format.contains(RomFormat::Nintendo64) || format.contains(RomFormat::NintendoDS) {
+            Some(
+                Path::new(
+                    regex_replace!(r"(nds|n64|v64|z64)$"i, file.to_str().unwrap(), "zip").as_ref(),
+                )
+                .to_path_buf(),
+            )
         } else {
             None
         }
@@ -312,7 +313,9 @@ impl Converter {
 
             files.push((out_file.clone(), FileSource::Output));
 
-            let expression = if format.contains(RomFormat::PSX) || format.contains(RomFormat::PS2) {
+            let expression = if format.contains(RomFormat::PlayStationX)
+                || format.contains(RomFormat::PlayStation2)
+            {
                 Some(cmd!(
                     "chdman",
                     "createcd",
@@ -321,7 +324,7 @@ impl Converter {
                     "-o",
                     out_file.to_str().unwrap()
                 ))
-            } else if format.contains(RomFormat::PSP) {
+            } else if format.contains(RomFormat::PlayStationPortable) {
                 Some(cmd!("maxcso", in_file.to_str().unwrap(),))
             } else if format.contains(RomFormat::Nintendo64) && !format.contains(RomFormat::Z64) {
                 Some(cmd!("rom64", "convert", in_file.to_str().unwrap(),))
@@ -359,7 +362,10 @@ impl Converter {
                 }
             }
 
-            if !interrupted && format.contains(RomFormat::Nintendo64) {
+            if !interrupted
+                && (format.contains(RomFormat::Nintendo64)
+                    || format.contains(RomFormat::NintendoDS))
+            {
                 let temp_file = &files
                     .iter()
                     .find(|(_, s)| *s == FileSource::Temporary)

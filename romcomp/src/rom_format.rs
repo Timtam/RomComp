@@ -18,17 +18,21 @@ bitflags! {
         const V64 = 0b1000;
         /// Nintendo 64 ROM
         const Z64 = 0b10000;
+        /// Nintendo DS ROM
+        const NDS = 0b100000;
 
         /// the file format flags
         const FILE_FORMATS = 0b11111111;
 
         /// either a bin / cue combination, or an iso
-        const PSX = 0b100000000;
+        const PlayStationX = 0b100000000;
         /// either a bin / cue combination, or an iso
-        const PS2 = 0b1000000000;
+        const PlayStation2 = 0b1000000000;
         /// an iso
-        const PSP = 0b10000000000;
+        const PlayStationPortable = 0b10000000000;
         /// any of the 3 n64 formats (n64, v64 or z64)
         const Nintendo64 = 0b100000000000;
+        /// Nintendo DS
+        const NintendoDS = 0b1000000000000;
     }
 }
