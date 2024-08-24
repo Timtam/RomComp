@@ -24,25 +24,23 @@ RUN cargo build --release && \
 
 COPY romcomp/src ./src
 
-RUN find target/ -type f -name "romcomp*" -path "*-unknown-linux-musl/release/deps/*" -exec rm {} \;
-RUN RUSTFLAGS='-L /musl/lib' cargo build --release
+RUN find target/ -type f -name "romcomp*" -path "*-unknown-linux-musl/release/deps/*" -exec rm {} \; && \
+    RUSTFLAGS='-L /musl/lib' cargo build --release && \
+    find target/ -type f -name "romcomp" -path "*-unknown-linux-musl/release/*" -exec cp {} . \;
 
-# copy file to fixed folder
+FROM alpine:3.20 AS c_builder
 
-RUN find target/ -type f -name "romcomp" -path "*-unknown-linux-musl/release/*" -exec cp {} . \;
-
-FROM alpine:3.20 AS maxcso_builder
-
-WORKDIR /maxcso
+WORKDIR /build
 
 RUN apk update && \
-    apk add --no-cache build-base gcc git libuv-dev lz4-dev pkgconf zlib-dev && \
-    git clone https://github.com/unknownbrackets/maxcso && \
+    apk add --no-cache build-base gcc git libuv-dev lz4-dev pkgconf zlib-dev
+
+RUN git clone https://github.com/unknownbrackets/maxcso && \
     cd maxcso && \
     git checkout tags/v1.13.0 && \
     make
 
-FROM golang:1.19-alpine AS rom64_builder
+FROM golang:1.19-alpine AS go_builder
 
 WORKDIR /rom64
 
@@ -54,14 +52,25 @@ RUN apk update && \
     go get -d && \
     go build -ldflags "-s -w" main.go
 
+FROM ghcr.io/graalvm/native-image:java11-21.2 AS java_builder
+
+WORKDIR /build
+
+RUN microdnf install git && \
+    git clone https://github.com/XanderXAJ/BitButcher && \
+    cd BitButcher && \
+    ./make.sh && \
+    native-image --static -jar bin/BitButcher.jar
+
 FROM alpine:3.20
 
 RUN echo "@testing https://dl-cdn.alpinelinux.org/alpine/edge/testing" >> /etc/apk/repositories && \
-   apk update && \
-    apk add --no-cache dolphin-emu libuv mame-tools@testing
+    apk update && \
+    apk add --no-cache dolphin-emu gcompat libuv mame-tools@testing
 
-COPY --from=maxcso_builder /maxcso/maxcso/maxcso /usr/bin/
-COPY --from=rom64_builder /rom64/rom64/main /usr/bin/rom64
+COPY --from=c_builder /build/maxcso/maxcso /usr/bin/
+COPY --from=go_builder /rom64/rom64/main /usr/bin/rom64
+COPY --from=java_builder /build/BitButcher/BitButcher /usr/bin/
 COPY --from=romcomp_builder /app/romcomp/romcomp /usr/bin/
 
 WORKDIR /roms

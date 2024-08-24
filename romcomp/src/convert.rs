@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use tempfile::TempDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -39,10 +40,11 @@ pub struct Converter {
     flatten: bool,
     root_directory: PathBuf,
     interrupt: Receiver<()>,
+    temp_dir: Arc<TempDir>,
 }
 
 impl Converter {
-    pub fn new(root: &PathBuf, threads: usize, interrupt: Receiver<()>) -> Self {
+    pub fn new(root: &PathBuf, temp_dir: TempDir, threads: usize, interrupt: Receiver<()>) -> Self {
         Self {
             available_threads: threads,
             thread_count: Arc::new(AtomicUsize::new(0)),
@@ -55,6 +57,7 @@ impl Converter {
             flatten: false,
             root_directory: root.clone(),
             interrupt,
+            temp_dir: Arc::new(temp_dir),
         }
     }
 
@@ -155,6 +158,7 @@ impl Converter {
         let verbose = self.verbose;
         let flatten = self.flatten;
         let root = self.root_directory.clone();
+        let temp_dir = Arc::clone(&self.temp_dir);
 
         self.thread_count.fetch_add(1, Ordering::Relaxed);
 
@@ -215,6 +219,16 @@ impl Converter {
                             ));
                         }
                         files
+                    } else if format.contains(RomFormat::NintendoDS) {
+                        let new = temp_dir.path().join(p.file_name().unwrap()).to_path_buf();
+
+                        if verbose {
+                            println!("Copy {} to {} temporarily", p.display(), new.display());
+                        }
+
+                        let _ = copy(p, &new);
+
+                        vec![(p.clone(), FileSource::Input), (new, FileSource::Temporary)]
                     } else {
                         vec![(p.clone(), FileSource::Input)]
                     }
@@ -328,6 +342,18 @@ impl Converter {
                 Some(cmd!("maxcso", in_file.to_str().unwrap(),))
             } else if format.contains(RomFormat::Nintendo64) && !format.contains(RomFormat::Z64) {
                 Some(cmd!("rom64", "convert", in_file.to_str().unwrap(),))
+            } else if format.contains(RomFormat::NintendoDS) {
+                Some(cmd!(
+                    "BitButcher",
+                    "-e",
+                    files
+                        .iter()
+                        .find(|(_, s)| *s == FileSource::Temporary)
+                        .unwrap()
+                        .0
+                        .to_str()
+                        .unwrap(),
+                ))
             } else {
                 None
             };

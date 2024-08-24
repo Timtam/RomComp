@@ -14,6 +14,7 @@ use std::{
     path::PathBuf,
     process::{Command, ExitCode, Stdio},
 };
+use tempfile::tempdir;
 use walkdir::WalkDir;
 
 /// RomComp - a ROM compressor that picks the best compression options for you and supports as many ROM formats as possible
@@ -137,6 +138,22 @@ fn main() -> Result<ExitCode> {
         }
     }
 
+    if cli.format == SourceRomFormat::Nds {
+        match Command::new("BitButcher")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Err(e) => {
+                if let ErrorKind::NotFound = e.kind() {
+                    println!("You'll need to have BITBUTCHER available on your PATH if you want to convert these ROMs. Please run this application from Docker or install BITBUTCHER manually and try again.");
+                    return Ok(ExitCode::from(2));
+                }
+            }
+            _ => (),
+        }
+    }
+
     if cli.format == SourceRomFormat::Psp {
         match Command::new("maxcso")
             .stdout(Stdio::null())
@@ -165,7 +182,9 @@ fn main() -> Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
 
-    let converter = Converter::new(&location, cli.threads, ctrl_c_events.clone())
+    let tmp = tempdir()?;
+
+    let converter = Converter::new(&location, tmp, cli.threads, ctrl_c_events.clone())
         .verbose(cli.verbose)
         .remove_after_compression(cli.remove_after_compression)
         .flatten(cli.flatten);
