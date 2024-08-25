@@ -90,6 +90,12 @@ impl Converter {
                 file.file_stem().unwrap().to_str().unwrap(),
                 "cso"
             )))
+        } else if format.contains(RomFormat::NintendoWii) {
+            Some(file.parent().unwrap().join(format!(
+                "{}.{}",
+                file.file_stem().unwrap().to_str().unwrap(),
+                "rvz"
+            )))
         } else if format.contains(RomFormat::Nintendo64) || format.contains(RomFormat::NintendoDS) {
             Some(
                 Path::new(
@@ -353,6 +359,23 @@ impl Converter {
                         .0
                         .to_str()
                         .unwrap(),
+                ))
+            } else if format.contains(RomFormat::NintendoWii) {
+                Some(cmd!(
+                    "dolphin-tool",
+                    "convert",
+                    "-b",
+                    "131072",
+                    "-c",
+                    "zstd",
+                    "-f",
+                    "rvz",
+                    "-i",
+                    in_file.to_str().unwrap(),
+                    "-l",
+                    "5",
+                    "-o",
+                    out_file.to_str().unwrap(),
                 ))
             } else {
                 None

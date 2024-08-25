@@ -34,5 +34,7 @@ bitflags! {
         const Nintendo64 = 0b100000000000;
         /// Nintendo DS
         const NintendoDS = 0b1000000000000;
+        /// Nintendo Wii
+        const NintendoWii = 0b10000000000000;
     }
 }

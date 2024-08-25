@@ -23,6 +23,7 @@ pub fn guess_file(path: &PathBuf) -> Option<RomFormat> {
                     RomFormat::PlayStationX
                         | RomFormat::PlayStation2
                         | RomFormat::PlayStationPortable
+                        | RomFormat::NintendoWii
                         | RomFormat::ISO,
                 )
             } else if path.is_file() && e.to_lowercase().ends_with(".n64") {

@@ -63,6 +63,7 @@ enum SourceRomFormat {
     Psx,
     Ps2,
     Psp,
+    Wii,
 }
 
 fn ctrl_channel() -> Result<Receiver<()>> {
@@ -94,6 +95,7 @@ fn main() -> Result<ExitCode> {
         SourceRomFormat::Ps2 => RomFormat::PlayStation2,
         SourceRomFormat::Psp => RomFormat::PlayStationPortable,
         SourceRomFormat::Nds => RomFormat::NintendoDS,
+        SourceRomFormat::Wii => RomFormat::NintendoWii,
     };
 
     if cli.flatten && !cli.remove_after_compression {
@@ -163,6 +165,22 @@ fn main() -> Result<ExitCode> {
             Err(e) => {
                 if let ErrorKind::NotFound = e.kind() {
                     println!("You'll need to have MAXCSO available on your PATH if you want to convert these ROMs. Please run this application from Docker or install MAXCSO manually and try again.");
+                    return Ok(ExitCode::from(2));
+                }
+            }
+            _ => (),
+        }
+    }
+
+    if cli.format == SourceRomFormat::Wii {
+        match Command::new("dolphin-tool")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Err(e) => {
+                if let ErrorKind::NotFound = e.kind() {
+                    println!("You'll need to have DOLPHIN-TOOL available on your PATH if you want to convert these ROMs. Please run this application from Docker or install DOLPHIN-TOOL manually and try again.");
                     return Ok(ExitCode::from(2));
                 }
             }
