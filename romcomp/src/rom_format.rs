@@ -94,7 +94,7 @@ impl RomFormat {
             Some(CompressionTool::Chdman)
         } else if self.contains(RomFormat::PlayStationPortable) {
             Some(CompressionTool::MaxCSO)
-        } else if self.contains(RomFormat::Nintendo64) || !self.contains(RomFormat::Z64) {
+        } else if self.contains(RomFormat::Nintendo64) && !self.contains(RomFormat::Z64) {
             Some(CompressionTool::Rom64)
         } else if self.contains(RomFormat::NintendoDS) {
             Some(CompressionTool::BitButcher)

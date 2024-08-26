@@ -239,6 +239,7 @@ impl Converter {
 
                         vec![
                             (p.clone(), FileSource::Input),
+                            (new.clone(), FileSource::TemporaryInput),
                             (new, FileSource::TemporaryOutput),
                         ]
                     } else {
@@ -250,29 +251,36 @@ impl Converter {
                            remove_after_compression: bool,
                            interrupted: bool,
                            verbose: bool| {
+                let mut processed = vec![];
+
                 for (file, source) in f.into_iter() {
-                    if source == FileSource::TemporaryInput || source == FileSource::TemporaryOutput
-                    {
-                        if verbose {
-                            println!("Deleting temporary file {}", file.display());
+                    if !processed.contains(&file) {
+                        if source == FileSource::TemporaryInput
+                            || source == FileSource::TemporaryOutput
+                        {
+                            if verbose {
+                                println!("Deleting temporary file {}", file.display());
+                            }
+
+                            let _ = remove_file(&file);
+                        } else if source == FileSource::Input
+                            && remove_after_compression
+                            && !interrupted
+                        {
+                            if verbose {
+                                println!("Deleting input file {}", file.display());
+                            }
+
+                            let _ = remove_file(&file);
+                        } else if source == FileSource::Output && interrupted {
+                            if verbose {
+                                println!("Deleting incomplete output file {}", file.display());
+                            }
+
+                            let _ = remove_file(&file);
                         }
 
-                        let _ = remove_file(file);
-                    } else if source == FileSource::Input
-                        && remove_after_compression
-                        && !interrupted
-                    {
-                        if verbose {
-                            println!("Deleting input file {}", file.display());
-                        }
-
-                        let _ = remove_file(file);
-                    } else if source == FileSource::Output && interrupted {
-                        if verbose {
-                            println!("Deleting incomplete output file {}", file.display());
-                        }
-
-                        let _ = remove_file(file);
+                        processed.push(file);
                     }
                 }
             };
@@ -335,10 +343,22 @@ impl Converter {
                 .0
                 .clone();
 
-            let out_file = Converter::get_output_file_name(&in_file, format).unwrap();
+            let mut out_file = if format.zip() && format.compression_tool().is_some() {
+                files
+                    .iter()
+                    .find(|(_, s)| *s == FileSource::TemporaryOutput)
+                    .unwrap()
+                    .0
+                    .clone()
+            } else {
+                Converter::get_output_file_name(&in_file, format).unwrap()
+            };
             let mut interrupted = false;
 
-            files.push((out_file.clone(), FileSource::Output));
+            files.push((
+                Converter::get_output_file_name(&p, format).unwrap(),
+                FileSource::Output,
+            ));
 
             let expression = format
                 .compression_tool()
@@ -375,6 +395,13 @@ impl Converter {
             }
 
             if !interrupted && format.zip() {
+                out_file = files
+                    .iter()
+                    .find(|(_, s)| *s == FileSource::Output)
+                    .unwrap()
+                    .0
+                    .clone();
+
                 let temp_file = &files
                     .iter()
                     .find(|(_, s)| *s == FileSource::TemporaryOutput)
