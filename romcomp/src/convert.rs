@@ -1,7 +1,6 @@
 use crate::rom_format::RomFormat;
 use crossbeam_channel::Receiver;
 use cue::cd::CD;
-use duct::cmd;
 use filesize::PathExt;
 use humansize::{format_size, DECIMAL};
 use lazy_regex::regex_replace;
@@ -22,8 +21,12 @@ use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 enum FileSource {
     /// input to romcomp, not created by us
     Input,
-    /// temporary, created by romcomp
-    Temporary,
+    /// temporary input file, created by romcomp
+    /// used e.g. with cue.txt files, which need to be copied into .cue files
+    TemporaryInput,
+    /// temporary output files, created by romcomp
+    /// used e.g. when trimming NDS files or converting N64 roms
+    TemporaryOutput,
     /// the compression target, created during the conversion
     Output,
 }
@@ -194,7 +197,7 @@ impl Converter {
 
                             let _ = copy(p, &new);
 
-                            files.push((new, FileSource::Temporary));
+                            files.push((new, FileSource::TemporaryInput));
                         }
 
                         files.append(
@@ -221,7 +224,7 @@ impl Converter {
                                     p.file_stem().unwrap().to_str().unwrap(),
                                     "z64"
                                 )),
-                                FileSource::Temporary,
+                                FileSource::TemporaryOutput,
                             ));
                         }
                         files
@@ -234,7 +237,10 @@ impl Converter {
 
                         let _ = copy(p, &new);
 
-                        vec![(p.clone(), FileSource::Input), (new, FileSource::Temporary)]
+                        vec![
+                            (p.clone(), FileSource::Input),
+                            (new, FileSource::TemporaryOutput),
+                        ]
                     } else {
                         vec![(p.clone(), FileSource::Input)]
                     }
@@ -245,7 +251,8 @@ impl Converter {
                            interrupted: bool,
                            verbose: bool| {
                 for (file, source) in f.into_iter() {
-                    if source == FileSource::Temporary {
+                    if source == FileSource::TemporaryInput || source == FileSource::TemporaryOutput
+                    {
                         if verbose {
                             println!("Deleting temporary file {}", file.display());
                         }
@@ -321,65 +328,21 @@ impl Converter {
                 }
             }
 
-            let in_file = if format.contains(RomFormat::BIN) {
-                Path::new(regex_replace!(r"\.txt$"i, p.to_str().unwrap(), "").as_ref())
-                    .to_path_buf()
-            } else {
-                p
-            };
+            let in_file = files
+                .iter()
+                .find(|(_, s)| *s == FileSource::TemporaryInput)
+                .unwrap_or_else(|| &files.iter().find(|(_, s)| *s == FileSource::Input).unwrap())
+                .0
+                .clone();
 
             let out_file = Converter::get_output_file_name(&in_file, format).unwrap();
             let mut interrupted = false;
 
             files.push((out_file.clone(), FileSource::Output));
 
-            let expression = if format.contains(RomFormat::PlayStationX)
-                || format.contains(RomFormat::PlayStation2)
-            {
-                Some(cmd!(
-                    "chdman",
-                    "createcd",
-                    "-i",
-                    in_file.to_str().unwrap(),
-                    "-o",
-                    out_file.to_str().unwrap()
-                ))
-            } else if format.contains(RomFormat::PlayStationPortable) {
-                Some(cmd!("maxcso", in_file.to_str().unwrap(),))
-            } else if format.contains(RomFormat::Nintendo64) && !format.contains(RomFormat::Z64) {
-                Some(cmd!("rom64", "convert", in_file.to_str().unwrap(),))
-            } else if format.contains(RomFormat::NintendoDS) {
-                Some(cmd!(
-                    "BitButcher",
-                    "-e",
-                    files
-                        .iter()
-                        .find(|(_, s)| *s == FileSource::Temporary)
-                        .unwrap()
-                        .0
-                        .to_str()
-                        .unwrap(),
-                ))
-            } else if format.contains(RomFormat::NintendoWii) {
-                Some(cmd!(
-                    "dolphin-tool",
-                    "convert",
-                    "-b",
-                    "131072",
-                    "-c",
-                    "zstd",
-                    "-f",
-                    "rvz",
-                    "-i",
-                    in_file.to_str().unwrap(),
-                    "-l",
-                    "5",
-                    "-o",
-                    out_file.to_str().unwrap(),
-                ))
-            } else {
-                None
-            };
+            let expression = format
+                .compression_tool()
+                .map(|c| c.build(&in_file, &out_file));
 
             if let Some(e) = expression {
                 let proc = e
@@ -411,13 +374,10 @@ impl Converter {
                 }
             }
 
-            if !interrupted
-                && (format.contains(RomFormat::Nintendo64)
-                    || format.contains(RomFormat::NintendoDS))
-            {
+            if !interrupted && format.zip() {
                 let temp_file = &files
                     .iter()
-                    .find(|(_, s)| *s == FileSource::Temporary)
+                    .find(|(_, s)| *s == FileSource::TemporaryOutput)
                     .unwrap_or_else(|| {
                         &files.iter().find(|(_, s)| *s == FileSource::Input).unwrap()
                     })
